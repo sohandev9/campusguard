@@ -1,0 +1,18 @@
+# Virtual Environment
+env/
+__pycache__/
+
+# Datasets and Uploads
+data/
+uploads/
+master_training_data.csv
+
+# Heavy ML Models
+*.pt
+*.task
+*.pkl
+data2/
+demo_videos/
+archieves/
+v1/
+v2/

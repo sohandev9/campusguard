@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CampusGuard AI</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --accent: #3fb950;
+    --danger: #f85149;
+    --warn: #ffa657;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  header {
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  header h1 {
+    font-size: 20px;
+    margin: 0;
+  }
+  header .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+  main {
+    display: flex;
+    gap: 24px;
+    padding: 24px 28px;
+    flex-wrap: wrap;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .controls {
+    width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .controls h2 {
+    font-size: 15px;
+    margin: 0 0 6px 0;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  input[type="file"] {
+    color: var(--text);
+    font-size: 13px;
+  }
+  button, .btn {
+    background: #21262d;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    text-decoration: none;
+    text-align: center;
+    display: inline-block;
+  }
+  button:hover, .btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .legend { font-size: 13px; color: #8b949e; line-height: 1.8; }
+  .legend span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 8px; }
+  .video-wrap {
+    flex: 1;
+    min-width: 400px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #010409;
+    border-radius: 10px;
+    min-height: 420px;
+  }
+  .video-wrap img {
+    max-width: 100%;
+    border-radius: 8px;
+  }
+  .placeholder { color: #484f58; font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="dot"></div>
+  <h1>CampusGuard AI &mdash; Live Monitoring</h1>
+</header>
+
+<main>
+  <div class="panel controls">
+    <div>
+      <h2>Upload Demo Video</h2>
+      <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="video" accept="video/*" required>
+        <br><br>
+        <button type="submit">Analyze Video</button>
+      </form>
+    </div>
+
+    <div>
+      <h2>Live Camera</h2>
+      <a class="btn" href="/?source=webcam">Switch to Webcam</a>
+    </div>
+
+    <div>
+      <h2>Legend</h2>
+      <div class="legend">
+        <div><span style="background:#3fb950"></span>Normal tracked person</div>
+        <div><span style="background:#f85149"></span>Fight alert</div>
+        <div><span style="background:#ffa657"></span>Fall alert</div>
+        <div><span style="background:#f85149"></span>Unattended bag</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel video-wrap">
+    {% if source %}
+      <img src="/video_feed?source={{ source }}" alt="live feed">
+    {% else %}
+      <div class="placeholder">Upload a video or switch to webcam to begin.</div>
+    {% endif %}
+  </div>
+</main>
+
+</body>
+</html>
