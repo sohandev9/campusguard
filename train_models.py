@@ -76,6 +76,7 @@ def compute_windowed_dataset(df):
             if velocity is None:
                 window = []  # discontinuity - don't average across it
             else:
+                velocity[features.TORSO_TILT_COLUMN] = features.compute_torso_tilt_degrees(curr_coords)
                 features.update_window(window, curr_time, velocity)
                 stats = features.compute_window_stats(window)
                 if stats is not None:
@@ -127,14 +128,34 @@ def train_one_model(stats_df, task_name, feature_columns, output_path):
     print(f"\n=== {task_name} model report (held-out CLIPS, never seen during training) ===")
     print(classification_report(y_test, y_pred, digits=3))
 
+    # Which specific clips is it still getting wrong? video_name encodes the
+    # activity (e.g. "Subject.3_Sit_down", "Subject.3_Fall_backwards"), so
+    # this shows you exactly which activities the model confuses - e.g.
+    # whether "sit down" / "kneel" / "pick up object" are still being
+    # mistaken for falls, or whether that's actually resolved.
+    test_video_names = task_df.iloc[test_idx]["video_name"].values
+    wrong_mask = y_pred != y_test
+    if wrong_mask.any():
+        from collections import Counter
+        counts = Counter(test_video_names[wrong_mask])
+        print(f"Top misclassified clips ({wrong_mask.sum()} wrong windows across "
+              f"{len(counts)} clips):")
+        for name, cnt in counts.most_common(10):
+            print(f"  {name}: {cnt} misclassified windows")
+
     joblib.dump({"model": clf, "feature_columns": feature_columns}, output_path)
     print(f"Saved {output_path}")
 
 
 def main():
     print(f"Loading {INPUT_CSV} ...")
-    # Added latin-1 encoding to prevent crashes on weird filenames
-    raw_df = pd.read_csv(INPUT_CSV, encoding='latin-1')
+    # latin-1: some source video filenames (corrupted RWF-2000 downloads)
+    # contain non-UTF8 bytes. on_bad_lines='skip': a handful of those same
+    # corrupted filenames contain stray comma/quote characters that break
+    # the CSV's column structure - those rows are junk from broken source
+    # files anyway (0 pose rows in practice), so skipping them is safe.
+    raw_df = pd.read_csv(INPUT_CSV, encoding='latin-1', on_bad_lines='skip')
+    print(f"Loaded {len(raw_df)} rows")
 
     print(f"Computing windowed velocity statistics "
           f"(window={features.WINDOW_SECONDS}s, grouped by video + person_id) ...")

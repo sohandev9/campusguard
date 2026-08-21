@@ -47,9 +47,17 @@ for _name in LANDMARK_NAMES:
 # Every per-frame velocity column that compute_velocity() can produce.
 ALL_VELOCITY_COLUMNS = [f"{n}_vx" for n in LANDMARK_NAMES] + [f"{n}_vy" for n in LANDMARK_NAMES]
 
+# Torso tilt: a POSTURE column (not a velocity) - see compute_torso_tilt_degrees.
+TORSO_TILT_COLUMN = "torso_tilt_deg"
+ALL_SAMPLE_COLUMNS = ALL_VELOCITY_COLUMNS + [TORSO_TILT_COLUMN]
+
 # ---------------------------------------------------------------------------
 # 2. Which landmarks each model cares about.
-#    Fight = arm/upper-body kinematics. Fall = torso collapse kinematics.
+#    Fight = arm/upper-body kinematics. Fall = torso collapse kinematics
+#    (downward velocity) PLUS torso tilt (final posture) - velocity alone
+#    can't tell a fall from a fast controlled sit-down/kneel, since both
+#    involve fast downward hip motion. Tilt distinguishes them: a real fall
+#    ends with the torso near-horizontal; sitting/kneeling ends upright.
 #    NOTE: bag/YOLO features are intentionally NEVER added here (data leakage).
 # ---------------------------------------------------------------------------
 FIGHT_LANDMARKS = [
@@ -102,7 +110,7 @@ def _window_stat_columns(base_columns):
 
 # These are the ACTUAL columns each .pkl model is trained/predicted on.
 FIGHT_FEATURE_COLUMNS = _window_stat_columns(FIGHT_VELOCITY_COLUMNS)
-FALL_FEATURE_COLUMNS = _window_stat_columns(FALL_VELOCITY_COLUMNS)
+FALL_FEATURE_COLUMNS = _window_stat_columns(FALL_VELOCITY_COLUMNS) + _window_stat_columns([TORSO_TILT_COLUMN])
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +139,32 @@ def hip_centroid(coords):
     x = (coords["left_hip_x"] + coords["right_hip_x"]) / 2.0
     y = (coords["left_hip_y"] + coords["right_hip_y"]) / 2.0
     return x, y
+
+
+def compute_torso_tilt_degrees(coords):
+    """Angle, in degrees, between the hip->shoulder line and VERTICAL.
+    0 = upright torso (standing, sitting, kneeling - shoulders directly
+    above hips). 90 = horizontal torso (lying down - a real fall's
+    end-state). This is a POSTURE snapshot from a single frame's raw
+    coordinates - not a velocity, no dt involved - which is exactly what
+    velocity-only features are missing: a fast controlled sit-down and an
+    uncontrolled collapse can have near-identical downward hip velocity,
+    but only the collapse ends up horizontal.
+
+    abs() on both components so the result doesn't care about left/right
+    lean or which way the shoulders/hips are offset - just how far the
+    torso has tilted away from vertical, so forward, backward, and
+    sideways falls all read the same way.
+    """
+    shoulder_x = (coords["left_shoulder_x"] + coords["right_shoulder_x"]) / 2.0
+    shoulder_y = (coords["left_shoulder_y"] + coords["right_shoulder_y"]) / 2.0
+    hip_x = (coords["left_hip_x"] + coords["right_hip_x"]) / 2.0
+    hip_y = (coords["left_hip_y"] + coords["right_hip_y"]) / 2.0
+
+    dx = abs(shoulder_x - hip_x)
+    dy = abs(shoulder_y - hip_y)
+    angle_rad = math.atan2(dx, dy + 1e-9)  # +epsilon: avoid divide-by-zero if dy==0
+    return math.degrees(angle_rad)
 
 
 # ---------------------------------------------------------------------------
@@ -178,9 +212,13 @@ def compute_velocity(prev_coords, curr_coords, dt_seconds):
 # feature vector the models see. Called identically by train_models.py
 # (using CSV timestamps) and app.py (using time.time()).
 # ---------------------------------------------------------------------------
-def update_window(window, timestamp, velocity):
+def update_window(window, timestamp, sample):
     """
-    window: a list of (timestamp, velocity_dict) tuples, chronological.
+    window: a list of (timestamp, sample_dict) tuples, chronological.
+    sample_dict holds this frame's per-landmark velocity (from
+    compute_velocity) plus any extra per-frame columns the caller wants
+    aggregated the same way, e.g. TORSO_TILT_COLUMN from
+    compute_torso_tilt_degrees - it's just a flat dict of named values.
     Appends the new sample and evicts anything older than WINDOW_SECONDS.
     Mutates and returns `window` for convenience.
 
@@ -189,14 +227,14 @@ def update_window(window, timestamp, velocity):
     gap or a rejected teleportation jump - continuing to average across
     that discontinuity would corrupt the window's statistics.
     """
-    window.append((timestamp, velocity))
+    window.append((timestamp, sample))
     cutoff = timestamp - WINDOW_SECONDS
     while window and window[0][0] < cutoff:
         window.pop(0)
     return window
 
 
-def compute_window_stats(window, base_columns=ALL_VELOCITY_COLUMNS):
+def compute_window_stats(window, base_columns=ALL_SAMPLE_COLUMNS):
     """
     window: list of (timestamp, velocity_dict) as built by update_window().
     Returns None if the window doesn't yet have MIN_WINDOW_SAMPLES entries

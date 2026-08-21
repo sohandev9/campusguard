@@ -2,6 +2,21 @@
 app.py
 ------
 CampusGuard AI live server.
+
+Shares its velocity + windowing math with train_models.py via
+features.compute_velocity(), features.update_window(), and
+features.compute_window_stats() - dt is a real time.time() delta here,
+exactly the same functions used in training (where dt came from the
+video's true FPS and the window used CSV timestamps), so a model trained
+on real-seconds windowed statistics is fed real-seconds windowed
+statistics at inference too. A rolling WINDOW_SECONDS of motion history
+is aggregated (mean/std/max) into the actual model input - not a single
+frame's instantaneous velocity - so the models can tell a punch from a
+wave, or a fall from a fast sit-down.
+
+Bag detection (YOLO classes 24/26/28) is completely independent of the
+fight/fall ML models - it is never turned into a model feature, so there is
+no data leakage and bag logic can't distort the pose classifiers.
 """
 
 import os
@@ -23,14 +38,11 @@ from ultralytics import YOLO
 import features
 
 # ---------------------------------------------------------------------------
-# Config - UPDATED ABSOLUTE PATHS
+# Config
 # ---------------------------------------------------------------------------
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-POSE_MODEL_PATH = os.path.join(BASE_DIR, "pose_landmarker_heavy.task")
-YOLO_MODEL_PATH = os.path.join(BASE_DIR, "yolov8n.pt")
-FIGHT_MODEL_PATH = os.path.join(BASE_DIR, "fight_detector_model.pkl")
-FALL_MODEL_PATH = os.path.join(BASE_DIR, "fall_detector_model.pkl")
+UPLOAD_DIR = "uploads"
+POSE_MODEL_PATH = "pose_landmarker_heavy.task"
+YOLO_MODEL_PATH = "yolov8n.pt"
 
 BAG_CLASSES = {24, 26, 28}   # COCO: backpack, handbag, suitcase
 PERSON_CLASS = 0
@@ -47,8 +59,8 @@ app = Flask(__name__)
 # Load models once at boot (NOT per-request - keeps GPU/VRAM usage sane)
 # ---------------------------------------------------------------------------
 print("Loading fight/fall models ...")
-fight_bundle = joblib.load(FIGHT_MODEL_PATH)
-fall_bundle = joblib.load(FALL_MODEL_PATH)
+fight_bundle = joblib.load("fight_detector_model.pkl")
+fall_bundle = joblib.load("fall_detector_model.pkl")
 FIGHT_MODEL, FIGHT_COLUMNS = fight_bundle["model"], fight_bundle["feature_columns"]
 FALL_MODEL, FALL_COLUMNS = fall_bundle["model"], fall_bundle["feature_columns"]
 
@@ -68,12 +80,13 @@ pose_landmarker = mp_vision.PoseLandmarker.create_from_options(_pose_options)
 
 
 # ---------------------------------------------------------------------------
-# Lightweight pixel-space tracker for bags
+# Lightweight pixel-space tracker for bags (separate from the pose tracker,
+# which lives in normalized 0-1 coordinate space).
 # ---------------------------------------------------------------------------
 class BagTracker:
     def __init__(self, max_distance_px):
         self.max_distance = max_distance_px
-        self.tracks = {}   
+        self.tracks = {}   # id -> {"centroid": (x,y), "first_seen": t, "last_near_person": t}
         self._next_id = 0
 
     def update(self, bag_centroids, person_centroids, now):
@@ -103,6 +116,7 @@ class BagTracker:
             if is_near_person:
                 self.tracks[best_id]["last_near_person"] = now
 
+        # drop tracks not seen this frame
         for tid in list(self.tracks.keys()):
             if tid not in matched_ids:
                 del self.tracks[tid]
@@ -116,17 +130,17 @@ class BagTracker:
 
 
 # ---------------------------------------------------------------------------
-# Core per-stream processing state
+# Core per-stream processing state (fresh instance per /video_feed call)
 # ---------------------------------------------------------------------------
 class StreamState:
     def __init__(self):
         self.person_tracker = features.PersonTracker()
-        self.bag_tracker = BagTracker(max_distance_px=None)  
-        self.prev_coords = {}       
-        self.velocity_windows = defaultdict(list)  
+        self.bag_tracker = BagTracker(max_distance_px=None)  # set once we know frame width
+        self.prev_coords = {}       # person_id -> (coords_dict, timestamp)
+        self.velocity_windows = defaultdict(list)  # person_id -> [(timestamp, velocity_dict), ...]
         self.fight_buffers = defaultdict(lambda: deque(maxlen=features.ALERT_WINDOW))
         self.fall_buffers = defaultdict(lambda: deque(maxlen=features.ALERT_WINDOW))
-        self.last_overlay_boxes = []   
+        self.last_overlay_boxes = []   # cached draw instructions for skipped frames
         self.frame_idx = 0
 
 
@@ -151,7 +165,8 @@ def run_yolo_bags(frame, state, now):
             bag_centroids.append((cx, cy))
 
     unattended_ids = state.bag_tracker.update(bag_centroids, person_centroids, now)
-    
+    # unattended_ids are track ids; re-derive which boxes are unattended by
+    # matching the just-updated centroids back to tracker state
     unattended_flags = []
     for (cx, cy) in bag_centroids:
         flagged = False
@@ -166,6 +181,7 @@ def run_yolo_bags(frame, state, now):
 
 
 def run_pose_models(frame, state, now):
+    """Returns list of (person_id, hip_pixel_xy, fight_alert, fall_alert)."""
     h, w = frame.shape[:2]
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     mp_image = mp_mediapipe.Image(image_format=mp_mediapipe.ImageFormat.SRGB, data=rgb)
@@ -191,8 +207,12 @@ def run_pose_models(frame, state, now):
         fall_alert = False
 
         if velocity is None:
+            # discontinuity (gap / teleportation jump) - reset this
+            # person's window, exactly like train_models.py does, so we
+            # never average across a broken sequence.
             state.velocity_windows[pid] = []
         else:
+            velocity[features.TORSO_TILT_COLUMN] = features.compute_torso_tilt_degrees(coords)
             window = state.velocity_windows[pid]
             features.update_window(window, now, velocity)
             stats = features.compute_window_stats(window)
@@ -307,4 +327,6 @@ def video_feed():
 
 
 if __name__ == "__main__":
+    # use_reloader=False: prevents Flask's debug reloader from loading the
+    # YOLO/MediaPipe/RandomForest models onto the GPU twice.
     app.run(debug=True, port=5000, use_reloader=False)
