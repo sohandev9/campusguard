@@ -16,3 +16,6 @@ demo_videos/
 archieves/
 v1/
 v2/
+*.pdf
+*.pptx
+ppt/
