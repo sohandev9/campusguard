@@ -97,14 +97,14 @@ ALERT_WINDOW = 15
 ALERT_THRESHOLD = 10
 
 # Person tracker tuning
-MAX_TRACK_DISTANCE = 0.25   # normalized-coord hip-centroid distance to match
+MAX_TRACK_DISTANCE = 0.5   # normalized-coord hip-centroid distance to match
 MAX_MISSED_FRAMES = 10      # frames a track can go undetected before it dies
 
 
 def _window_stat_columns(base_columns):
     cols = []
     for col in base_columns:
-        cols += [f"{col}_mean", f"{col}_std", f"{col}_max"]
+        cols += [f"{col}_mean", f"{col}_std", f"{col}_max", f"{col}_min"]
     return cols
 
 
@@ -182,11 +182,14 @@ def compute_velocity(prev_coords, curr_coords, dt_seconds):
         GPU lag / fluctuating FPS is naturally absorbed into dt instead of
         distorting velocity.
 
-    Returns None if dt is invalid (<=0, missing, or too large a gap i.e.
-    the person likely left and re-entered frame) or if any landmark's
-    velocity exceeds MAX_PLAUSIBLE_VELOCITY (teleportation / identity
-    switch residue) -> caller should drop the sample AND reset any rolling
-    window (see update_window below), since continuity is broken.
+    Returns None only if dt itself is invalid (<=0, missing, or too large a
+    gap i.e. the person likely left and re-entered frame) -> caller should
+    reset any rolling window (see update_window below), since continuity is
+    broken. If an INDIVIDUAL landmark's velocity exceeds
+    MAX_PLAUSIBLE_VELOCITY (teleportation / identity switch residue on that
+    one point), only THAT landmark is zeroed - the other landmarks in this
+    frame are still real, usable data and shouldn't be thrown away because
+    one point glitched.
     """
     if prev_coords is None or dt_seconds is None:
         return None
@@ -201,7 +204,7 @@ def compute_velocity(prev_coords, curr_coords, dt_seconds):
         vx = dx / dt_seconds
         vy = dy / dt_seconds
         if abs(vx) > MAX_PLAUSIBLE_VELOCITY or abs(vy) > MAX_PLAUSIBLE_VELOCITY:
-            return None  # teleportation jump -> reject whole row
+            vx, vy = 0.0, 0.0  # glitchy point only - zero it, keep the rest of the frame
         velocity[f"{name}_vx"] = vx
         velocity[f"{name}_vy"] = vy
     return velocity
@@ -236,15 +239,18 @@ def update_window(window, timestamp, sample):
 
 def compute_window_stats(window, base_columns=ALL_SAMPLE_COLUMNS):
     """
-    window: list of (timestamp, velocity_dict) as built by update_window().
+    window: list of (timestamp, sample_dict) as built by update_window().
     Returns None if the window doesn't yet have MIN_WINDOW_SAMPLES entries
     (caller should skip prediction/training for this row - not enough
     history yet to trust the statistics).
 
-    Otherwise returns a flat dict {"col_mean":..., "col_std":..., "col_max":...}
-    for every column in base_columns. mean/std capture sustained motion
-    level; max (of |v|) captures a single sharp peak (a punch, a collapse)
-    even if the rest of the window was calm.
+    Otherwise returns a flat dict {"col_mean":..., "col_std":..., "col_max":...,
+    "col_min":...} for every column in base_columns. mean/std capture
+    sustained motion level; max/min are SIGNED (not abs) so direction is
+    preserved - e.g. hip_vy_max being large and positive (moving down fast)
+    reads differently than hip_vy_min being large and negative (moving up
+    fast, like standing back up), which max(abs) alone would conflate into
+    the same value.
     """
     if len(window) < MIN_WINDOW_SAMPLES:
         return None
@@ -255,7 +261,8 @@ def compute_window_stats(window, base_columns=ALL_SAMPLE_COLUMNS):
         vals = np.array([v[col] for v in velocities], dtype=float)
         stats[f"{col}_mean"] = float(vals.mean())
         stats[f"{col}_std"] = float(vals.std())
-        stats[f"{col}_max"] = float(np.max(np.abs(vals)))
+        stats[f"{col}_max"] = float(vals.max())
+        stats[f"{col}_min"] = float(vals.min())
     return stats
 
 
@@ -270,59 +277,6 @@ def build_feature_vector(stats, columns):
 #    order, which is what actually caused the identity-switch bug.
 # ---------------------------------------------------------------------------
 class PersonTracker:
-    def __init__(self, max_distance=MAX_TRACK_DISTANCE, max_missed=MAX_MISSED_FRAMES):
-        self.max_distance = max_distance
-        self.max_missed = max_missed
-        self.tracks = {}       # person_id -> (x, y) last known hip centroid
-        self.missed = {}       # person_id -> consecutive frames missed
-        self._next_id = 0
-
-    def update(self, detections):
-        """
-        detections: list of (x, y) hip centroids for this frame, in
-        whatever order MediaPipe returned them (that order is NOT trusted).
-
-        Returns: list of person_id, same length/order as `detections`.
-        """
-        assigned = [None] * len(detections)
-        used_tracks = set()
-
-        # Greedy nearest-neighbour matching: closest pairs first.
-        candidate_pairs = []
-        for i, det in enumerate(detections):
-            for pid, last in self.tracks.items():
-                dist = math.hypot(det[0] - last[0], det[1] - last[1])
-                if dist <= self.max_distance:
-                    candidate_pairs.append((dist, i, pid))
-        candidate_pairs.sort(key=lambda p: p[0])
-
-        used_dets = set()
-        for dist, i, pid in candidate_pairs:
-            if i in used_dets or pid in used_tracks:
-                continue
-            assigned[i] = pid
-            used_dets.add(i)
-            used_tracks.add(pid)
-
-        # Unmatched detections become new tracks.
-        for i, det in enumerate(detections):
-            if assigned[i] is None:
-                pid = self._next_id
-                self._next_id += 1
-                assigned[i] = pid
-            self.tracks[assigned[i]] = det
-            self.missed[assigned[i]] = 0
-
-        # Age out tracks that weren't seen this frame.
-        for pid in list(self.tracks.keys()):
-            if pid not in used_tracks and pid not in assigned:
-                self.missed[pid] = self.missed.get(pid, 0) + 1
-                if self.missed[pid] > self.max_missed:
-                    del self.tracks[pid]
-                    del self.missed[pid]
-
-        return assigned
-
     def __init__(self, max_distance=MAX_TRACK_DISTANCE, max_missed=MAX_MISSED_FRAMES):
         self.max_distance = max_distance
         self.max_missed = max_missed

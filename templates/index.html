@@ -1,146 +1,171 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>CampusGuard AI</title>
-<style>
-  :root {
-    --bg: #0d1117;
-    --panel: #161b22;
-    --border: #30363d;
-    --text: #c9d1d9;
-    --accent: #3fb950;
-    --danger: #f85149;
-    --warn: #ffa657;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: "Segoe UI", Roboto, Arial, sans-serif;
-  }
-  header {
-    padding: 18px 28px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  header h1 {
-    font-size: 20px;
-    margin: 0;
-  }
-  header .dot {
-    width: 10px; height: 10px; border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 8px var(--accent);
-  }
-  main {
-    display: flex;
-    gap: 24px;
-    padding: 24px 28px;
-    flex-wrap: wrap;
-  }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 18px;
-  }
-  .controls {
-    width: 300px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-  .controls h2 {
-    font-size: 15px;
-    margin: 0 0 6px 0;
-    color: #8b949e;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  input[type="file"] {
-    color: var(--text);
-    font-size: 13px;
-  }
-  button, .btn {
-    background: #21262d;
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 10px 14px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
-    text-decoration: none;
-    text-align: center;
-    display: inline-block;
-  }
-  button:hover, .btn:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .legend { font-size: 13px; color: #8b949e; line-height: 1.8; }
-  .legend span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 8px; }
-  .video-wrap {
-    flex: 1;
-    min-width: 400px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #010409;
-    border-radius: 10px;
-    min-height: 420px;
-  }
-  .video-wrap img {
-    max-width: 100%;
-    border-radius: 8px;
-  }
-  .placeholder { color: #484f58; font-size: 14px; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CampusGuard AI — Live Monitoring</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 </head>
 <body>
-<header>
-  <div class="dot"></div>
-  <h1>CampusGuard AI &mdash; Live Monitoring</h1>
-</header>
+  <div class="scanline"></div>
 
-<main>
-  <div class="panel controls">
-    <div>
-      <h2>Upload Demo Video</h2>
-      <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="video" accept="video/*" required>
-        <br><br>
-        <button type="submit">Analyze Video</button>
-      </form>
-    </div>
-
-    <div>
-      <h2>Live Camera</h2>
-      <a class="btn" href="/?source=webcam">Switch to Webcam</a>
-    </div>
-
-    <div>
-      <h2>Legend</h2>
-      <div class="legend">
-        <div><span style="background:#3fb950"></span>Normal tracked person</div>
-        <div><span style="background:#f85149"></span>Fight alert</div>
-        <div><span style="background:#ffa657"></span>Fall alert</div>
-        <div><span style="background:#f85149"></span>Unattended bag</div>
+  <header class="ops-header">
+    <div class="header-left">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
+          <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21L12 17.77L5.82 21L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
+        </svg>
+        <span class="logo-text">CampusGuard<span class="logo-accent">AI</span></span>
       </div>
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-text" id="statusText">INITIALIZING</span>
     </div>
-  </div>
+    <div class="header-right">
+      <span class="timestamp" id="currentTime">--:--:--</span>
+    </div>
+  </header>
 
-  <div class="panel video-wrap">
-    {% if source %}
-      <img src="/video_feed?source={{ source }}" alt="live feed">
-    {% else %}
-      <div class="placeholder">Upload a video or switch to webcam to begin.</div>
-    {% endif %}
-  </div>
-</main>
+  <main>
+    <!-- Left sidebar: controls + stat cards -->
+    <aside class="sidebar">
+      <!-- Source controls -->
+      <section class="card">
+        <h2>VIDEO SOURCE</h2>
+        <div class="source-controls">
+          <button class="btn btn-primary" id="webcamBtn">Webcam</button>
 
+          <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+            <input type="file" name="video" accept="video/*" id="fileInput" hidden>
+            <button type="button" class="btn btn-secondary" id="uploadBtn">
+              Upload Video
+            </button>
+            <span class="filename" id="filenameDisplay">No file selected</span>
+          </form>
+
+          {% if source %}
+          <div class="current-source">
+            <span class="label">Current:</span>
+            <span class="value"># {{ source }}</span>
+          </div>
+          {% else %}
+          <div class="current-source">
+            <span class="label">Current:</span>
+            <span class="value">webcam</span>
+          </div>
+          {% endif %}
+        </div>
+      </section>
+
+      <!-- Live stat cards -->
+      <section class="card">
+        <h2>LIVE STATISTICS</h2>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-label">People Tracked</div>
+            <div class="stat-value" id="statPeople">0</div>
+            <div class="stat-led led-nominal" id="ledPeople"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Bags Detected</div>
+            <div class="stat-value" id="statBags">0</div>
+            <div class="stat-led led-warn" id="ledBags"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Fight Alerts</div>
+            <div class="stat-value stat-danger" id="statFight">0</div>
+            <div class="stat-led led-danger" id="ledFight"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Fall Alerts</div>
+            <div class="stat-value stat-warn" id="statFall">0</div>
+            <div class="stat-led led-warn" id="ledFall"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Unattended Bags</div>
+            <div class="stat-value stat-danger" id="statUnattended">0</div>
+            <div class="stat-led led-danger" id="ledUnattended"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Cumulative totals -->
+      <section class="card">
+        <h2>TOTAL ALERTS (SESSION)</h2>
+        <div class="stat-grid">
+          <div class="stat-card stat-card-sm">
+            <div class="stat-label">Total Fights</div>
+            <div class="stat-value stat-danger" id="totalFight">0</div>
+          </div>
+          <div class="stat-card stat-card-sm">
+            <div class="stat-label">Total Falls</div>
+            <div class="stat-value stat-warn" id="totalFall">0</div>
+          </div>
+          <div class="stat-card stat-card-sm">
+            <div class="stat-label">Total Unattended</div>
+            <div class="stat-value stat-danger" id="totalUnattended">0</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Legend -->
+      <section class="card">
+        <h2>LEGEND</h2>
+        <ul class="legend-list">
+          <li><span class="dot dot-nominal"></span>Normal person</li>
+          <li><span class="dot dot-danger"></span>Fight alert</li>
+          <li><span class="dot dot-warn"></li>Fall alert</li>
+          <li><span class="dot dot-warn-light"></span>Bag detected</li>
+          <li><span class="dot dot-danger"></span>Unattended bag</li>
+        </ul>
+      </section>
+    </aside>
+
+    <!-- Main video + alert log -->
+    <div class="main-content">
+      <!-- Video feed with viewfinder frame -->
+      <div class="video-container">
+        <div class="viewfinder-frame">
+          <div class="br-top-left"></div>
+          <div class="br-top-right"></div>
+          <div class="br-bottom-left"></div>
+          <div class="br-bottom-right"></div>
+        </div>
+
+        {% if source %}
+        <img src="/video_feed?source={{ source }}" alt="live feed" class="video-feed" id="videoFeed">
+        {% else %}
+        <div class="video-placeholder" id="videoPlaceholder">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48">
+            <path d="M12 8a4 4 0 0 0-4 4v4a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4v-4a4 4 0 0 0-4-4h-4zm0 2h4a2 2 0 0-2 2v4a2 2 0 0-2 2h-4a2 2 0 0-2-2v-4a2 2 0 0-2-2z"/>
+          </svg>
+          <p>Select a video source to begin live analysis</p>
+        </div>
+        {% endif %}
+
+        <!-- Overlay badge for active alerts -->
+        <div class="alert-badge" id="alertBadge" style="display: none;">
+          <span class="badge-text">ACTIVE ALERTS</span>
+          <div class="badge-items" id="badgeItems"></div>
+        </div>
+      </div>
+
+      <!-- Alert log panel -->
+      <aside class="alert-log-panel">
+        <h2>ALERT LOG</h2>
+        <div class="log-entries" id="logEntries">
+          <div class="log-placeholder">No alerts yet. Waiting for detection...</div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <script src="/static/dashboard.js"></script>
+  <script>
+    // Pass server-side initial source to JS
+    window.INITIAL_SOURCE = "{{ source or '' }}";
+  </script>
 </body>
 </html>

@@ -1,0 +1,576 @@
+/* ============================================================
+   CampusGuard AI — Ops-Room Dashboard Stylesheet
+   Dark charcoal-navy palette with cyan/amber/red status colors.
+   Fonts: Space Grotesk (headings), Inter (body), IBM Plex Mono (data)
+   ============================================================ */
+
+:root {
+  --bg-void:    #0b0f14;
+  --bg-panel:   #121821;
+  --bg-raised:  #1a222d;
+  --border:     #26313e;
+  --border-dim: #1e2733;
+  --text:       #e8edf2;
+  --text-dim:   #7c8b9c;
+  --text-xdim:  #5a6878;
+
+  --cyan:       #4dd8c4;
+  --cyan-dim:   #3ba79f;
+  --amber:      #ffa621;
+  --amber-dim:  #cc851a;
+  --red:        #ff4757;
+  --red-dim:    #cc3947;
+  --green:      #43e95a;
+  --green-dim:  #35ba48;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg-void);
+  color: var(--text);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* Scanning scanline effect — subtle movement across the screen */
+.scanline {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(77, 216, 196, 0.01) 50%,
+    transparent 100%
+  );
+  animation: scanMove 8s linear infinite;
+}
+
+@keyframes scanMove {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+/* ============================================================
+   Header
+   ============================================================ */
+.ops-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 24px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  height: 56px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.logo svg {
+  color: var(--cyan);
+}
+
+.logo-text span.logo-accent {
+  color: var(--cyan);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  animation: pulse 2s infinite;
+}
+
+.status-dot.offline {
+  background: var(--red);
+  box-shadow: 0 0 8px var(--red);
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(1.2); }
+}
+
+.status-text {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.timestamp {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 14px;
+  color: var(--text-dim);
+  letter-spacing: 0.15em;
+}
+
+/* ============================================================
+   Layout
+   ============================================================ */
+main {
+  display: flex;
+  height: calc(100vh - 56px);
+  gap: 20px;
+  padding: 20px;
+}
+
+.sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* ============================================================
+   Cards
+   ============================================================ */
+.card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.card h2 {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 12px;
+}
+
+/* ============================================================
+   Buttons
+   ============================================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Inter", sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.btn-primary {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  color: var(--bg-void);
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: var(--cyan-dim);
+  border-color: var(--cyan-dim);
+  box-shadow: 0 0 12px rgba(77, 216, 196, 0.4);
+}
+
+.btn-secondary {
+  background: var(--bg-raised);
+  border-color: var(--border);
+}
+
+.source-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.current-source {
+  display: flex;
+  justify-content: space-between;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  color: var(--text-dim);
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.filename {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--text-xdim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   Stat Cards
+   ============================================================ */
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.stat-card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 2px;
+  background: var(--border-dim);
+}
+
+.stat-card.stat-card-sm {
+  padding: 10px 14px;
+}
+
+.stat-card.stat-card-sm .stat-value {
+  font-size: 18px;
+}
+
+.stat-label {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.stat-value {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 24px;
+  font-weight: 400;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.stat-value.stat-danger { color: var(--red); }
+.stat-value.stat-warn { color: var(--amber); }
+.stat-value.stat-warn-light { color: var(--amber-dim); }
+.stat-value.stat-nominal { color: var(--cyan); }
+
+/* LED indicators on stat cards */
+.stat-led {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-xdim);
+  box-shadow: 0 0 0 0 rgba(124, 139, 156, 0);
+  transition: all 0.3s ease;
+}
+
+.stat-led.on {
+  box-shadow: 0 0 6px currentColor;
+}
+
+.led-nominal { background: var(--cyan); }
+.led-warn { background: var(--amber); }
+.led-danger { background: var(--red); }
+
+/* ============================================================
+   Video container + viewfinder
+   ============================================================ */
+.video-container {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: #010409;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  min-height: 480px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.viewfinder-frame {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.br-top-left, .br-top-right, .br-bottom-left, .br-bottom-right {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--cyan);
+  opacity: 0.4;
+}
+
+.br-top-left {
+  top: 12px;
+  left: 12px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.br-top-right {
+  top: 12px;
+  right: 12px;
+  border-left: none;
+  border-bottom: none;
+}
+
+.br-bottom-left {
+  bottom: 12px;
+  left: 12px;
+  border-right: none;
+  border-top: none;
+}
+
+.br-bottom-right {
+  bottom: 12px;
+  right: 12px;
+  border-left: none;
+  border-top: none;
+}
+
+.video-feed {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  display: block;
+}
+
+.video-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-xdim);
+  text-align: center;
+  padding: 24px;
+}
+
+.video-placeholder svg {
+  opacity: 0.3;
+}
+
+/* Alert badge overlay */
+.alert-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(26, 34, 45, 0.9);
+  border: 1px solid var(--red);
+  border-radius: 6px;
+  padding: 8px 12px;
+  z-index: 10;
+  backdrop-filter: blur(4px);
+}
+
+.badge-text {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--red);
+  margin-bottom: 4px;
+  display: block;
+}
+
+.badge-items {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.badge-item {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--border-dim);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+/* ============================================================
+   Alert Log Panel
+   ============================================================ */
+.alert-log-panel {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.alert-log-panel .card {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.log-entries {
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.log-placeholder {
+  text-align: center;
+  color: var(--text-xdim);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  padding: 20px;
+  opacity: 0.6;
+}
+
+.log-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-dim);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+}
+
+.log-entry:hover {
+  background: var(--border-dim);
+}
+
+.log-entry .log-type {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.log-entry .log-meta {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.log-entry .log-type.fight { color: var(--red); }
+.log-entry .log-type.fall  { color: var(--amber); }
+.log-entry .log-type.unattended_bag { color: var(--red); }
+
+.log-entry .log-time {
+  color: var(--text-xdim);
+}
+
+/* ============================================================
+   Legend list
+   ============================================================ */
+.legend-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.legend-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.dot-nominal   { background: var(--cyan); box-shadow: 0 0 4px var(--cyan); }
+.dot-danger   { background: var(--red); box-shadow: 0 0 4px var(--red); }
+.dot-warn     { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
+.dot-warn-light { background: var(--amber-dim); }
+
+/* ============================================================
+   Hidden file input
+   ============================================================ */
+#fileInput {
+  display: none;
+}
+
+/* ============================================================
+   Scrollbar
+   ============================================================ */
+.stat-grid::-webkit-scrollbar,
+.alert-log-panel .card::-webkit-scrollbar,
+.log-entries::-webkit-scrollbar {
+  width: 6px;
+}
+
+.stat-grid::-webkit-scrollbar-track,
+.alert-log-panel .card::-webkit-scrollbar-track,
+.log-entries::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.stat-grid::-webkit-scrollbar-thumb,
+.alert-log-panel .card::-webkit-scrollbar-thumb,
+.log-entries::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.stat-grid::-webkit-scrollbar-thumb:hover,
+.alert-log-panel .card::-webkit-scrollbar-thumb:hover,
+.log-entries::-webkit-scrollbar-thumb:hover {
+  background: var(--cyan);
+}

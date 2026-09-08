@@ -1,7 +1,7 @@
 """
 batch_extractor.py
 -------------------
-Walks the raw video datasets, runs MediaPipe PoseLandmarker (num_poses=4) on
+Walks the raw video datasets, runs MediaPipe PoseLandmarker (num_poses=8) on
 every frame, assigns a STABLE person_id via features.PersonTracker, and dumps
 one row per (video, frame, person) with RAW landmark coordinates only.
 
@@ -199,10 +199,10 @@ def _run_pose_loop(frame_iterator, video_name, task, label, fps):
     options = mp_vision.PoseLandmarkerOptions(
         base_options=base_options,
         running_mode=mp_vision.RunningMode.VIDEO,
-        num_poses=4,
-        min_pose_detection_confidence=0.5,
-        min_pose_presence_confidence=0.5,
-        min_tracking_confidence=0.5,
+        num_poses=8,
+        min_pose_detection_confidence=0.3,
+        min_pose_presence_confidence=0.3,
+        min_tracking_confidence=0.3,
     )
 
     tracker = features.PersonTracker()
