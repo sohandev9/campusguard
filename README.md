@@ -70,8 +70,8 @@ Work in progress. We did not qualify in SIH 2026, and we are continuing to impro
 - [ ] Test on more real-world footage
 
 ## Datasets and References
-- [Add datasets used]
+- FIGHT and FALL Datasets from Kaggle
 - YOLOv8: Ultralytics
 
 ## Team
-- [Name] ([GitHub link])
+- Team EVO!
