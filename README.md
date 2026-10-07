@@ -122,7 +122,3 @@ recorded footage. Currently building a web dashboard front-end
 - **YOLOv8 / YOLOv8-pose** (Ultralytics) — person detection, pose estimation
 - **BoT-SORT** — multi-object tracking with appearance re-identification
 - **R(2+1)D-18** (Kinetics-400 pretrained, torchvision) — fight action recognition backbone
-
-## Team
-
-Team EVO!
