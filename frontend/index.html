@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CampusGuard Vision</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="app-shell">
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">◉</div>
+        <div>
+          <div class="brand-name">CAMPGUARD</div>
+          <div class="brand-sub">VISION • AI SURVEILLANCE</div>
+        </div>
+        <span class="system-online"><i></i> SYSTEM ONLINE</span>
+      </div>
+
+      <div class="top-meta">
+        <span>LOCAL MONITORING</span>
+        <b></b>
+        <span>RTX 5060</span>
+        <b></b>
+        <span class="live-pill"><i></i> LIVE</span>
+      </div>
+    </header>
+
+    <main class="workspace">
+
+      <section class="video-panel panel">
+        <div class="panel-head">
+          <div class="panel-title"><span class="tiny-icon">⌁</span> LIVE CAMERA FEED</div>
+          <div class="camera-meta">
+            <span class="camera-online"><i></i> CAMERA 01</span>
+            <span class="live-pill"><i></i> LIVE</span>
+          </div>
+        </div>
+
+        <div class="video-stage">
+          <div class="video-alert-overlay" id="videoAlert">⚠ <span id="videoAlertText"></span></div>
+          <div class="tracking-overlay">AI TRACKING ACTIVE</div>
+
+          <img id="videoFeed" alt="CampusGuard annotated camera feed" />
+
+          <div class="video-placeholder" id="videoPlaceholder">
+            <div class="placeholder-icon">◉</div>
+            <div class="placeholder-title">CAMERA 01</div>
+            <div class="placeholder-sub">Upload a video and press START MONITORING</div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="sidebar">
+
+        <section class="panel status-panel">
+          <div class="panel-head compact">
+            <div class="panel-title">⌁ &nbsp;SYSTEM STATUS</div>
+            <span class="ready-count" id="readyCount">4 / 4 READY</span>
+          </div>
+
+          <div class="status-list">
+            <div class="status-row" data-module="tracker">
+              <span class="status-icon">⌁</span>
+              <span class="status-name">TRACKER</span>
+              <span class="status-value"><i></i><b>ACTIVE</b></span>
+            </div>
+
+            <div class="status-row" data-module="fall">
+              <span class="status-icon">♙</span>
+              <span class="status-name">FALL DETECTION</span>
+              <span class="status-value"><i></i><b>READY</b></span>
+            </div>
+
+            <div class="status-row" data-module="fight">
+              <span class="status-icon">♧</span>
+              <span class="status-name">FIGHT DETECTION</span>
+              <span class="status-value"><i></i><b>READY</b></span>
+            </div>
+
+            <div class="status-row" data-module="bags">
+              <span class="status-icon">▣</span>
+              <span class="status-name">UNATTENDED BAG</span>
+              <span class="status-value"><i></i><b>READY</b></span>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel alerts-panel">
+          <div class="panel-head compact">
+            <div class="panel-title">♧ &nbsp;LIVE ALERTS</div>
+            <span class="event-count" id="eventCount">0 EVENTS</span>
+          </div>
+
+          <div class="alert-list" id="alertList">
+            <div class="empty-alerts" id="emptyAlerts">
+              <span>NO ACTIVE ALERTS</span>
+              <small>Monitoring events will appear here.</small>
+            </div>
+          </div>
+        </section>
+
+      </aside>
+    </main>
+
+    <footer class="controlbar">
+      <div class="source-group">
+        <span class="control-label">VIDEO SOURCE</span>
+        <label class="choose-btn">
+          <input type="file" id="videoInput" accept="video/*" />
+          <span>▣ &nbsp;Choose Video</span>
+        </label>
+        <span class="filename" id="filename">No video selected</span>
+      </div>
+
+      <div class="action-group">
+        <button class="btn start" id="startBtn">▷ &nbsp; START MONITORING</button>
+        <button class="btn stop" id="stopBtn">□ &nbsp; STOP</button>
+      </div>
+
+      <div class="connection-group">
+        <span>STREAM <i class="dot" id="streamDot"></i> <b id="streamState">DISCONNECTED</b></span>
+        <span>WEBSOCKET <i class="dot" id="wsDot"></i> <b id="wsState">CONNECTING</b></span>
+        <span>FPS <b>30</b></span>
+        <span>GPU <b>RTX 5060</b></span>
+      </div>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

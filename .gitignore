@@ -22,3 +22,12 @@ ppt/
 **/runs/
 
 *.pt
+# Python cache and environment files
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log

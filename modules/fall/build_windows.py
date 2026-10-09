@@ -1,111 +1,105 @@
 """
-CampusGuard Vision - Fall Detection Module
-Step 3 (updated): Build fixed-length labeled training windows, with
-normalized keypoints to fix the domain-gap issue found during testing.
+CampusGuard Vision - Fall Detection
+Step 3 (fixed labelling): build training windows from raw keypoint sequences.
 
-Save as: modules/fall/build_windows.py
+Save as: modules/fall/build_windows.py   (replaces the old file)
 Run as:  python build_windows.py
+
+WHAT WAS WRONG BEFORE
+UR Fall's per-frame labels are:   -1 = upright,  0 = the fall itself (30 frames),
+                                   1 = lying on the floor (until the clip ends).
+The old script marked a window as "fall" if it contained any label-1 frame,
+so the model was taught that LYING STILL = fall, while the actual falling
+motion (label 0) was taught as "not a fall".
+
+NOW
+  positive  = window contains >= MIN_TRANSITION_FRAMES frames of the fall itself
+  negative  = no transition frames (upright, or already lying still), all ADL
+              windows, plus any hard negatives mined from your own clips
+  ambiguous = 1..MIN_TRANSITION_FRAMES-1 transition frames -> dropped
+Windows are saved RAW (pixel keypoints); normalisation/augmentation happen in
+train_model.py via pose_utils so training and inference share the same code.
 """
 
 import os
 import csv
+import glob
 import numpy as np
 from collections import defaultdict
-from pose_utils import normalize_keypoints
 
 KEYPOINTS_DIR = r"D:\hackathon\campusguard\data\keypoints"
+HARD_NEG_DIR = r"D:\hackathon\campusguard\data\hard_negatives"
 OUTPUT_DIR = r"D:\hackathon\campusguard\data\windows"
 FALL_LABELS_CSV = r"D:\hackathon\campusguard\data\urfall-cam0-falls.csv"
-WINDOW_SIZE = 30
-STRIDE = 10
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+WINDOW_SIZE = 30
+STRIDE = 5
+MIN_TRANSITION_FRAMES = 15
 
 
 def load_frame_labels(csv_path):
     labels = defaultdict(dict)
     with open(csv_path, "r") as f:
-        reader = csv.reader(f)
-        for row in reader:
-            seq_name, frame_num, label = row[0], int(row[1]), int(row[2])
-            labels[seq_name][frame_num] = label
+        for row in csv.reader(f):
+            labels[row[0]][int(row[1])] = int(row[2])
     return labels
 
 
 def clean_seq_name(npy_filename, prefix):
-    name = npy_filename.replace(prefix, "").replace(".npy", "")
-    name = name.replace("-cam0-rgb", "")
-    return name
-
-
-def normalize_sequence(seq):
-    """Applies normalize_keypoints to every frame in a (num_frames, 34) sequence."""
-    return np.array([normalize_keypoints(frame) for frame in seq], dtype=np.float32)
+    return npy_filename.replace(prefix, "").replace(".npy", "").replace("-cam0-rgb", "")
 
 
 def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     fall_labels = load_frame_labels(FALL_LABELS_CSV)
-
-    X, y, sequence_ids = [], [], []
-
-    for filename in sorted(os.listdir(KEYPOINTS_DIR)):
-        if not filename.startswith("fall_"):
-            continue
-
-        seq_name = clean_seq_name(filename, "fall_")
-        seq = np.load(os.path.join(KEYPOINTS_DIR, filename))
-        seq = normalize_sequence(seq)
-
-        if seq_name not in fall_labels:
-            print(f"[WARNING] No label data for {seq_name}, skipping")
-            continue
-
-        frame_label_map = fall_labels[seq_name]
-
-        if len(seq) < WINDOW_SIZE:
-            print(f"[SKIPPED] {seq_name}: shorter than window size")
-            continue
-
-        for start in range(0, len(seq) - WINDOW_SIZE + 1, STRIDE):
-            window = seq[start:start + WINDOW_SIZE]
-            window_frame_nums = range(start + 1, start + WINDOW_SIZE + 1)
-            window_labels = [frame_label_map.get(fn, -1) for fn in window_frame_nums]
-            is_fall_window = 1 if 1 in window_labels else 0
-
-            X.append(window)
-            y.append(is_fall_window)
-            sequence_ids.append(seq_name)
+    X, y, ids = [], [], []
+    n_fall_pos = n_fall_neg = n_dropped = n_adl = n_hard = 0
 
     for filename in sorted(os.listdir(KEYPOINTS_DIR)):
-        if not filename.startswith("adl_"):
+        if not filename.endswith(".npy"):
             continue
-
-        seq_name = clean_seq_name(filename, "adl_")
-        seq = np.load(os.path.join(KEYPOINTS_DIR, filename))
-        seq = normalize_sequence(seq)
-
+        seq = np.load(os.path.join(KEYPOINTS_DIR, filename)).astype(np.float32)
         if len(seq) < WINDOW_SIZE:
-            print(f"[SKIPPED] {seq_name}: shorter than window size")
             continue
 
-        for start in range(0, len(seq) - WINDOW_SIZE + 1, STRIDE):
-            window = seq[start:start + WINDOW_SIZE]
-            X.append(window)
-            y.append(0)
-            sequence_ids.append(seq_name)
+        if filename.startswith("fall_"):
+            name = clean_seq_name(filename, "fall_")
+            if name not in fall_labels:
+                print(f"[WARNING] no labels for {name}, skipped")
+                continue
+            lab = fall_labels[name]
+            for s in range(0, len(seq) - WINDOW_SIZE + 1, STRIDE):
+                n_trans = sum(1 for fn in range(s + 1, s + WINDOW_SIZE + 1) if lab.get(fn, -1) == 0)
+                if n_trans >= MIN_TRANSITION_FRAMES:
+                    X.append(seq[s:s + WINDOW_SIZE]); y.append(1); ids.append(name); n_fall_pos += 1
+                elif n_trans == 0:
+                    X.append(seq[s:s + WINDOW_SIZE]); y.append(0); ids.append(name); n_fall_neg += 1
+                else:
+                    n_dropped += 1
 
-    X = np.array(X, dtype=np.float32)
-    y = np.array(y)
-    sequence_ids = np.array(sequence_ids)
+        elif filename.startswith("adl_"):
+            name = clean_seq_name(filename, "adl_")
+            for s in range(0, len(seq) - WINDOW_SIZE + 1, STRIDE):
+                X.append(seq[s:s + WINDOW_SIZE]); y.append(0); ids.append(name); n_adl += 1
 
-    np.save(os.path.join(OUTPUT_DIR, "X.npy"), X)
+    # hard negatives mined from your own non-fall clips (evaluate_fall.py --mine)
+    for path in sorted(glob.glob(os.path.join(HARD_NEG_DIR, "hn_*.npy"))):
+        wins = np.load(path).astype(np.float32)          # (M, 30, 34)
+        name = os.path.splitext(os.path.basename(path))[0]
+        for w in wins:
+            X.append(w); y.append(0); ids.append(name); n_hard += 1
+
+    X, y, ids = np.array(X, dtype=np.float32), np.array(y), np.array(ids)
+    np.save(os.path.join(OUTPUT_DIR, "X_raw.npy"), X)
     np.save(os.path.join(OUTPUT_DIR, "y.npy"), y)
-    np.save(os.path.join(OUTPUT_DIR, "sequence_ids.npy"), sequence_ids)
+    np.save(os.path.join(OUTPUT_DIR, "sequence_ids.npy"), ids)
 
-    print(f"\nTotal windows: {len(X)}")
-    print(f"Fall windows: {(y == 1).sum()}")
-    print(f"Not-fall windows: {(y == 0).sum()}")
-    print(f"Unique sequences: {len(np.unique(sequence_ids))}")
+    print(f"Positive (fall motion) windows : {n_fall_pos}")
+    print(f"Negative from fall clips       : {n_fall_neg}  (upright / already lying still)")
+    print(f"Negative from ADL clips        : {n_adl}")
+    print(f"Negative from your hard-negs   : {n_hard}")
+    print(f"Dropped as ambiguous           : {n_dropped}")
+    print(f"TOTAL {len(X)} windows, {len(np.unique(ids))} source clips -> {OUTPUT_DIR}")
 
 
 if __name__ == "__main__":

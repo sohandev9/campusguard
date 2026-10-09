@@ -1,130 +1,161 @@
 """
-CampusGuard Vision - Fall Detection Module
-Step 4 (updated): Train LSTM on normalized pose-sequence windows.
+CampusGuard Vision - Fall Detection
+Step 4 (rewritten): train the fall-MOTION classifier.
 
-Save as: modules/fall/train_model.py
-Run as:  python train_model.py
+Save as: modules/fall/train_model.py   (replaces the old file)
+Run as:  python train_model.py     (after build_windows.py)
 
-Keypoints are already normalized (position/scale invariant) by
-build_windows.py - no extra normalization needed here.
-Train/val split is done by SEQUENCE (whole video), not by window, to avoid
-data leakage from overlapping windows.
+Changes vs the old version
+ - trains on the corrected labels (fall motion, not "lying on the floor")
+ - 37 features per frame (pose + trajectory), see pose_utils.py
+ - augmentation: mirror, camera-angle jitter, noise, missing keypoints, cut-off legs
+ - gentler class weighting (sqrt) so it stops over-predicting "fall"
+ - validation split is per clip AND stratified, so fall clips appear in val
+ - picks the alert threshold from validation (precision >= 0.90) and saves it
+   next to the model as fall_lstm_config.json
 """
 
 import os
+import json
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
+from fall_model import FallLSTM
+from pose_utils import featurize_window, augment_raw, FEATURE_DIM
+
 WINDOWS_DIR = r"D:\hackathon\campusguard\data\windows"
 MODEL_SAVE_PATH = r"D:\hackathon\campusguard\models\fall_lstm.pt"
+CONFIG_SAVE_PATH = MODEL_SAVE_PATH.replace(".pt", "_config.json")
 VAL_FRACTION = 0.2
-RANDOM_SEED = 42
-
-X = np.load(f"{WINDOWS_DIR}/X.npy").astype(np.float32)   # already normalized
-y = np.load(f"{WINDOWS_DIR}/y.npy")
-sequence_ids = np.load(f"{WINDOWS_DIR}/sequence_ids.npy", allow_pickle=True)
-
-unique_seqs = np.unique(sequence_ids)
-rng = np.random.default_rng(RANDOM_SEED)
-rng.shuffle(unique_seqs)
-
-n_val = max(1, int(VAL_FRACTION * len(unique_seqs)))
-val_seqs = set(unique_seqs[:n_val])
-train_seqs = set(unique_seqs[n_val:])
-
-train_mask = np.array([s in train_seqs for s in sequence_ids])
-val_mask = np.array([s in val_seqs for s in sequence_ids])
-
-X_train, y_train = X[train_mask], y[train_mask]
-X_val, y_val = X[val_mask], y[val_mask]
-
-print(f"Train sequences: {len(train_seqs)} | Train windows: {len(X_train)} "
-      f"(fall: {(y_train == 1).sum()}, not-fall: {(y_train == 0).sum()})")
-print(f"Val sequences:   {len(val_seqs)} | Val windows:   {len(X_val)} "
-      f"(fall: {(y_val == 1).sum()}, not-fall: {(y_val == 0).sum()})")
+SEED = 42
+EPOCHS = 40
+BATCH_SIZE = 32
+LR = 1e-3
+PRECISION_TARGET = 0.90
+THRESHOLDS = [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95]
 
 
-class FallDataset(Dataset):
-    def __init__(self, X, y):
-        self.X = torch.tensor(X, dtype=torch.float32)
-        self.y = torch.tensor(y, dtype=torch.long)
+class WindowDataset(Dataset):
+    def __init__(self, X_raw, y, augment, seed=0):
+        self.X, self.y, self.augment = X_raw, y, augment
+        self.rng = np.random.default_rng(seed)
+        self.cached = None if augment else np.stack([featurize_window(w) for w in X_raw])
 
     def __len__(self):
         return len(self.X)
 
-    def __getitem__(self, idx):
-        return self.X[idx], self.y[idx]
+    def __getitem__(self, i):
+        feats = featurize_window(augment_raw(self.X[i], self.rng)) if self.augment else self.cached[i]
+        return torch.from_numpy(feats), int(self.y[i])
 
 
-class FallLSTM(nn.Module):
-    def __init__(self, input_size=34, hidden_size=64, num_layers=2):
-        super().__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.3)
-        self.fc = nn.Linear(hidden_size, 2)
+def pr_at(probs, labels, thr):
+    pred = probs >= thr
+    tp = int(((pred == 1) & (labels == 1)).sum())
+    fp = int(((pred == 1) & (labels == 0)).sum())
+    fn = int(((pred == 0) & (labels == 1)).sum())
+    p = tp / (tp + fp) if tp + fp else 0.0
+    r = tp / (tp + fn) if tp + fn else 0.0
+    f1 = 2 * p * r / (p + r) if p + r else 0.0
+    return p, r, f1, fp
 
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
+
+def predict_probs(model, loader, device):
+    model.eval()
+    out = []
+    with torch.no_grad():
+        for xb, _ in loader:
+            out.append(torch.softmax(model(xb.to(device)), dim=1)[:, 1].cpu().numpy())
+    return np.concatenate(out)
 
 
 def main():
+    torch.manual_seed(SEED)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    train_ds = FallDataset(X_train, y_train)
-    val_ds = FallDataset(X_val, y_val)
+    X = np.load(os.path.join(WINDOWS_DIR, "X_raw.npy"))
+    y = np.load(os.path.join(WINDOWS_DIR, "y.npy"))
+    ids = np.load(os.path.join(WINDOWS_DIR, "sequence_ids.npy"), allow_pickle=True)
 
-    train_loader = DataLoader(train_ds, batch_size=16, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=16)
+    # split by clip, stratified so validation contains fall clips
+    rng = np.random.default_rng(SEED)
+    pos_clips = sorted({s for s, l in zip(ids, y) if l == 1})
+    other_clips = sorted(set(ids) - set(pos_clips))
 
-    model = FallLSTM().to(device)
+    def split(lst):
+        lst = list(lst); rng.shuffle(lst)
+        n = max(1, int(round(VAL_FRACTION * len(lst))))
+        return set(lst[:n]), set(lst[n:])
 
-    class_counts = np.bincount(y_train, minlength=2)
-    class_weights = torch.tensor(
-        [1.0 / max(class_counts[0], 1), 1.0 / max(class_counts[1], 1)], dtype=torch.float32
-    ).to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    val_a, train_a = split(pos_clips)
+    val_b, train_b = split(other_clips)
+    val_clips, train_clips = val_a | val_b, train_a | train_b
+    tr = np.array([s in train_clips for s in ids])
+    va = np.array([s in val_clips for s in ids])
 
-    epochs = 30
-    for epoch in range(epochs):
+    print(f"Train: {tr.sum()} windows ({int(y[tr].sum())} fall) from {len(train_clips)} clips")
+    print(f"Val  : {va.sum()} windows ({int(y[va].sum())} fall) from {len(val_clips)} clips "
+          f"({len(val_a)} fall clips)")
+
+    train_loader = DataLoader(WindowDataset(X[tr], y[tr], True, SEED), batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(WindowDataset(X[va], y[va], False), batch_size=BATCH_SIZE)
+
+    model = FallLSTM(input_size=FEATURE_DIM).to(device)
+    n_pos, n_neg = int(y[tr].sum()), int((1 - y[tr]).sum())
+    w_pos = float(np.sqrt(n_neg / max(n_pos, 1)))
+    criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.0, w_pos], dtype=torch.float32).to(device))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+
+    best_f1, best_state, y_val = -1.0, None, y[va]
+    for epoch in range(EPOCHS):
         model.train()
-        total_loss = 0
+        total = 0.0
         for xb, yb in train_loader:
             xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
-            out = model(xb)
-            loss = criterion(out, yb)
+            loss = criterion(model(xb), yb)
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
+            total += loss.item()
+        scheduler.step()
 
-        model.eval()
-        correct, total = 0, 0
-        tp, fp, fn = 0, 0, 0
-        with torch.no_grad():
-            for xb, yb in val_loader:
-                xb, yb = xb.to(device), yb.to(device)
-                preds = model(xb).argmax(dim=1)
-                correct += (preds == yb).sum().item()
-                total += yb.size(0)
-                tp += ((preds == 1) & (yb == 1)).sum().item()
-                fp += ((preds == 1) & (yb == 0)).sum().item()
-                fn += ((preds == 0) & (yb == 1)).sum().item()
+        p, r, f1, fp = pr_at(predict_probs(model, val_loader, device), y_val, 0.5)
+        print(f"Epoch {epoch+1:02d}/{EPOCHS} | loss {total/len(train_loader):.4f} | "
+              f"val@0.5  precision {p:.3f}  recall {r:.3f}  F1 {f1:.3f}  false-alarm windows {fp}")
+        if f1 >= best_f1:
+            best_f1 = f1
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
-        precision = tp / (tp + fp + 1e-6)
-        recall = tp / (tp + fn + 1e-6)
-        f1 = 2 * precision * recall / (precision + recall + 1e-6)
+    model.load_state_dict(best_state)
+    probs = predict_probs(model, val_loader, device)
 
-        print(f"Epoch {epoch+1}/{epochs} | Loss: {total_loss:.4f} | "
-              f"Val Acc: {correct/max(total,1):.3f} | Precision: {precision:.3f} | "
-              f"Recall: {recall:.3f} | F1: {f1:.3f}")
+    print("\nValidation at different alert thresholds (best epoch):")
+    print("  thr   precision  recall   false-alarm windows")
+    chosen = THRESHOLDS[-1]
+    for t in THRESHOLDS:
+        p, r, f1, fp = pr_at(probs, y_val, t)
+        print(f"  {t:.2f}   {p:.3f}      {r:.3f}    {fp}")
+    for t in THRESHOLDS:
+        p, r, _, _ = pr_at(probs, y_val, t)
+        if p >= PRECISION_TARGET and r > 0:
+            chosen = t
+            break
+    p, r, _, _ = pr_at(probs, y_val, chosen)
 
     os.makedirs(os.path.dirname(MODEL_SAVE_PATH), exist_ok=True)
-    torch.save(model.state_dict(), MODEL_SAVE_PATH)
-    print(f"\nModel saved to {MODEL_SAVE_PATH}")
+    torch.save(best_state, MODEL_SAVE_PATH)
+    with open(CONFIG_SAVE_PATH, "w") as f:
+        json.dump({"threshold": chosen, "window": 30, "feature_dim": FEATURE_DIM,
+                   "val_precision": round(p, 3), "val_recall": round(r, 3),
+                   "val_fall_clips": len(val_a)}, f, indent=2)
+    print(f"\nChosen alert threshold: {chosen}  (val precision {p:.3f}, recall {r:.3f})")
+    print(f"Saved model  -> {MODEL_SAVE_PATH}\nSaved config -> {CONFIG_SAVE_PATH}")
+    print("NOTE: validation is small - treat these numbers as a sanity check, "
+          "and judge the model with evaluate_fall.py on your own clips.")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """
 CampusGuard Vision - Combined Pipeline
 Runs all three detection modules together on one video:
-  - Person tracking (BoT-SORT) + Fall detection (per-person pose LSTM)
+  - Person tracking (BoT-SORT) + Fall detection (rule: torso flat + wide box, modules/fall/fall_rule.py)
   - Fight detection (scene-level R(2+1)D sliding window)
   - Unattended bag detection (rule-based, stationary object + no owner nearby)
 
@@ -15,25 +15,25 @@ the repo root without path issues. Uses TWO YOLO models:
 """
 
 import os
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
 import cv2
-from collections import deque, defaultdict
+from collections import deque
 from ultralytics import YOLO
 from torchvision.models.video import r2plus1d_18
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "modules", "fall"))
+from fall_rule import FallRule  # noqa: E402
+
 # ==================== CONFIG ====================
-VIDEO_PATH = r"D:\hackathon\campusguard\data\test_combined.mp4"   # update to your test clip
+VIDEO_PATH = r"D:\clips\normal\4HH7yMU8y9A_0.avi"   # update to your test clip
 OUTPUT_PATH = r"D:\hackathon\campusguard\data\combined_output.mp4"
 
-FALL_MODEL_PATH = r"D:\hackathon\campusguard\models\fall_lstm.pt"
 FIGHT_MODEL_PATH = r"D:\hackathon\campusguard\models\fight_r2plus1d.pt"
 
-# Fall settings
-FALL_WINDOW_SIZE = 30
-FALL_CHECK_EVERY_N_FRAMES = 5
-FALL_HOLD_FRAMES = 15
+# Fall settings are inside modules/fall/fall_rule.py (FallRule defaults)
 TRACK_CONF_THRESHOLD = 0.4
 
 # Fight settings
@@ -54,42 +54,6 @@ BAG_CONF_THRESHOLD = 0.35
 # ==================================================
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-# ---------------- Fall detection ----------------
-class FallLSTM(nn.Module):
-    def __init__(self, input_size=34, hidden_size=64, num_layers=2):
-        super().__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.3)
-        self.fc = nn.Linear(hidden_size, 2)
-
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
-
-
-def normalize_keypoints(kpts_flat):
-    """Same normalization used in training - see modules/fall/pose_utils.py."""
-    kpts = np.array(kpts_flat, dtype=np.float32).reshape(17, 2)
-    valid_mask = np.any(kpts != 0, axis=1)
-    if valid_mask.sum() == 0:
-        return kpts_flat
-    valid_pts = kpts[valid_mask]
-    center = valid_pts.mean(axis=0)
-    min_xy = valid_pts.min(axis=0)
-    max_xy = valid_pts.max(axis=0)
-    scale = np.linalg.norm(max_xy - min_xy)
-    if scale < 1e-3:
-        scale = 1.0
-    normalized = np.where(kpts != 0, (kpts - center) / scale, 0)
-    return normalized.flatten().astype(np.float32)
-
-
-def predict_fall(model, window):
-    x = torch.tensor(window, dtype=torch.float32).unsqueeze(0).to(device)
-    with torch.no_grad():
-        probs = torch.softmax(model(x), dim=1)
-    return probs.argmax(dim=1).item(), probs[0, 1].item()
 
 
 # ---------------- Fight detection ----------------
@@ -160,10 +124,6 @@ def main():
     pose_model = YOLO(r"D:\hackathon\campusguard\models\yolov8n-pose.pt")
     object_model = YOLO("yolov8n.pt")
 
-    fall_model = FallLSTM().to(device)
-    fall_model.load_state_dict(torch.load(FALL_MODEL_PATH, map_location=device))
-    fall_model.eval()
-
     fight_model = r2plus1d_18(weights=None)
     fight_model.fc = nn.Linear(fight_model.fc.in_features, 2)
     fight_model.load_state_dict(torch.load(FIGHT_MODEL_PATH, map_location=device))
@@ -181,9 +141,8 @@ def main():
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     writer = cv2.VideoWriter(OUTPUT_PATH, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
-    # per-person fall state
-    keypoint_buffers = defaultdict(lambda: deque(maxlen=FALL_WINDOW_SIZE))
-    fall_hold_counters = defaultdict(int)
+    # per-person fall state lives inside FallRule
+    fall_rule = FallRule(fps=fps)
 
     # fight state
     fight_window_frames = int(round(FIGHT_WINDOW_SECONDS * fps))
@@ -216,24 +175,21 @@ def main():
                 x1, y1, x2, y2 = boxes[i]
                 person_boxes.append((x1, y1, x2, y2))
 
-                kpts = (r.keypoints.xy[i].cpu().numpy().flatten()
-                        if r.keypoints is not None and i < len(r.keypoints.xy) else np.zeros(34))
-                keypoint_buffers[track_id].append(normalize_keypoints(kpts))
+                has_kp = r.keypoints is not None and i < len(r.keypoints.xy)
+                kp = r.keypoints.xy[i].cpu().numpy() if has_kp else np.zeros((17, 2), np.float32)
+                kc_all = getattr(r.keypoints, "conf", None) if r.keypoints is not None else None
+                kc = kc_all[i].cpu().numpy() if kc_all is not None and i < len(kc_all) else np.ones(17, np.float32)
+                fall_alert, _, _, _ = fall_rule.update(track_id, boxes[i], kp, kc, frame_idx, (width, height))
 
                 box_color, label = (0, 255, 0), f"ID:{track_id}"
-                buf = keypoint_buffers[track_id]
-                if len(buf) == FALL_WINDOW_SIZE and frame_idx % FALL_CHECK_EVERY_N_FRAMES == 0:
-                    pred, _ = predict_fall(fall_model, np.array(buf, dtype=np.float32))
-                    if pred == 1:
-                        fall_hold_counters[track_id] = FALL_HOLD_FRAMES
-
-                if fall_hold_counters[track_id] > 0:
+                if fall_alert:
                     box_color, label = (0, 0, 255), f"ID:{track_id} FALL DETECTED"
-                    fall_hold_counters[track_id] -= 1
 
                 cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 3)
                 cv2.putText(frame, label, (x1, max(y1 - 10, 20)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, box_color, 2)
+
+        fall_rule.prune(frame_idx)
 
         # ---- Fight detection (scene-level) ----
         fight_buffer.append(cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), (FIGHT_SIZE, FIGHT_SIZE)))
